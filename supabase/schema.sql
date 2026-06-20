@@ -1,0 +1,45 @@
+-- rooms テーブルを作成
+create table if not exists rooms (
+  id          text        primary key,
+  resident_name text,
+  twitter     text,
+  instagram   text,
+  bio         text,
+  bg_color    text        not null default '#ffffff',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+-- RLS を有効化
+alter table rooms enable row level security;
+
+-- 誰でも読み取り可能
+create policy "public read"
+  on rooms for select
+  using (true);
+
+-- 誰でも挿入可能
+create policy "public insert"
+  on rooms for insert
+  with check (true);
+
+-- 誰でも更新可能（オーナー判定はクライアント側 localStorage で行う）
+create policy "public update"
+  on rooms for update
+  using (true);
+
+-- リアルタイム有効化
+alter publication supabase_realtime add table rooms;
+
+-- updated_at 自動更新トリガー
+create or replace function update_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create trigger rooms_updated_at
+  before update on rooms
+  for each row execute function update_updated_at();

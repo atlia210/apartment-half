@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { useLang } from '@/contexts/LanguageContext'
 import { relativeTime } from '@/lib/i18n'
@@ -9,6 +10,7 @@ import { getProfile } from '@/lib/profile'
 import type { Room, RoomLog, RoomFormData } from '@/lib/types'
 import CheckInModal from './CheckInModal'
 import ConfirmDialog from './ConfirmDialog'
+import LogHistoryModal from './LogHistoryModal'
 import LangToggle from './LangToggle'
 import SettingsButton from './SettingsButton'
 
@@ -19,8 +21,13 @@ type Props = {
 const RESIDENT_KEY = 'apartment-half-resident'
 const ownerKey = (id: string) => `apartment-half-owner:${id}`
 
+// このページ読み込み中に visit を insert 中/済みの部屋キー（Strict Mode の二重実行による重複 insert を防ぐ）。
+// localStorage に 'pending' を残すと処理中断時に詰まるため、ガードはメモリ（モジュールスコープ）で持つ。
+const insertingRooms = new Set<string>()
+
 export default function RoomView({ roomId }: Props) {
   const { t, lang } = useLang()
+  const router = useRouter()
   const [room, setRoom] = useState<Room | null>(null)
   const [isOwner, setIsOwner] = useState(false)
   const [residentRoomId, setResidentRoomId] = useState<string | null>(null)
@@ -30,6 +37,9 @@ export default function RoomView({ roomId }: Props) {
   const [checkoutLoading, setCheckoutLoading] = useState(false)
   const [checkoutError, setCheckoutError] = useState('')
   const [logs, setLogs] = useState<RoomLog[]>([])
+  const [myLogId, setMyLogId] = useState<number | null>(null)
+  const [logsLoaded, setLogsLoaded] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
 
   const parentId = roomId.length > 1 ? roomId.slice(0, -1) : null
   const leftDoorId = roomId + '1'
@@ -49,30 +59,54 @@ export default function RoomView({ roomId }: Props) {
   }, [roomId])
 
   // 訪問ログの記録とフェッチ
+  // 入室時に自分の visit を記録（初回 insert / 再訪問は時刻 update）するが、
+  // 表示では myLogId で自分の行を除外し「前の訪問者」の時刻を見せる。
+  // ゲートは localStorage に保存し、タブを閉じても時間が経っても再カウントされないようにする。
   useEffect(() => {
     let cancelled = false
     const visitedKey = `apartment-half-visited:${roomId}`
+    setLogsLoaded(false)
 
     const run = async () => {
       try {
-        // キーを insert 前に同期的にセット（Strict Mode の二重実行による重複記録を防ぐ）
-        if (!sessionStorage.getItem(visitedKey)) {
-          sessionStorage.setItem(visitedKey, 'true')
+        const visited = localStorage.getItem(visitedKey)
+        if (visited && /^\d+$/.test(visited)) {
+          // 再訪問: 自分の行の created_at を「今」に更新（人数は増やさない）。
+          // id は global 一意なので別部屋に残っても誤除外せず、cancelled ガード不要。
+          const id = Number(visited)
+          setMyLogId(id)
+          await supabase.from('room_logs').update({ created_at: new Date().toISOString() }).eq('id', id)
+        } else if (!visited && !insertingRooms.has(visitedKey)) {
+          // 初回訪問: visit 行を insert。insertingRooms で Strict Mode の二重 insert を防ぐ。
+          insertingRooms.add(visitedKey)
           const name = getProfile().resident_name.trim()
-          const { error } = await supabase
+          const { data: inserted, error } = await supabase
             .from('room_logs')
             .insert({ room_id: roomId, event_type: 'visit', visitor_name: name || null })
-          // insert 失敗時はキーを戻して次回アクセスで再試行
-          if (error) sessionStorage.removeItem(visitedKey)
+            .select('id')
+            .single()
+          if (error) {
+            // insert 失敗時はガードを外して次回アクセスで再試行
+            insertingRooms.delete(visitedKey)
+          } else if (inserted) {
+            const id = (inserted as { id: number }).id
+            localStorage.setItem(visitedKey, String(id))
+            setMyLogId(id)
+          }
         }
-        if (cancelled) return
+        // insert 処理中（insertingRooms 登録済み・localStorage 未確定）の場合は何もしない（myLogId 据え置き）。
+
+        // 表示用に全ログを取得（自分の行は表示側で除外）
         const { data } = await supabase
           .from('room_logs')
           .select('id, event_type, visitor_name, created_at')
           .eq('room_id', roomId)
           .order('created_at', { ascending: false })
           .limit(200)
-        if (!cancelled) setLogs((data as RoomLog[]) ?? [])
+        if (!cancelled && data) {
+          setLogs(data as RoomLog[])
+          setLogsLoaded(true)
+        }
       } catch {
         // Supabase 未接続時は無視
       }
@@ -124,6 +158,41 @@ export default function RoomView({ roomId }: Props) {
     return () => { supabase.removeChannel(channel) }
   }, [roomId])
 
+  // キーボード操作: ←→↓ で扉移動、↑ で入居ボタン
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      // モーダル表示中・入力中は無効
+      if (showModal || showCheckoutConfirm || showHistory) return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+
+      switch (e.key) {
+        case 'ArrowLeft':
+          e.preventDefault()
+          router.push(`/room/${leftDoorId}`)
+          break
+        case 'ArrowRight':
+          e.preventDefault()
+          router.push(`/room/${rightDoorId}`)
+          break
+        case 'ArrowDown':
+          e.preventDefault()
+          router.push(parentId ? `/room/${parentId}` : '/')
+          break
+        case 'ArrowUp':
+          // 空室で、かつ他の部屋に入居していない場合のみ入居モーダルを開く
+          if (!room && !(residentRoomId !== null && residentRoomId !== roomId)) {
+            e.preventDefault()
+            setModalMode('checkin')
+            setShowModal(true)
+          }
+          break
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [router, roomId, leftDoorId, rightDoorId, parentId, room, residentRoomId, showModal, showCheckoutConfirm, showHistory])
+
   // 入居・編集処理
   const handleSubmit = useCallback(
     async (data: RoomFormData) => {
@@ -163,14 +232,22 @@ export default function RoomView({ roomId }: Props) {
 
       if (modalMode === 'checkin') {
         const name = data.resident_name.trim() || null
-        supabase.from('room_logs').insert({ room_id: roomId, event_type: 'checkin', visitor_name: name })
-        setLogs(prev => [{
-          id: Date.now(),
-          room_id: roomId,
-          event_type: 'checkin' as const,
-          visitor_name: name,
-          created_at: new Date().toISOString(),
-        }, ...prev])
+        // await しないと supabase-js はリクエストを送らない（＝他セッションに保存されない）
+        const { data: inserted } = await supabase
+          .from('room_logs')
+          .insert({ room_id: roomId, event_type: 'checkin', visitor_name: name })
+          .select('id, event_type, visitor_name, created_at')
+          .single()
+        setLogs(prev => [
+          (inserted as RoomLog) ?? {
+            id: Date.now(),
+            room_id: roomId,
+            event_type: 'checkin' as const,
+            visitor_name: name,
+            created_at: new Date().toISOString(),
+          },
+          ...prev,
+        ])
       }
       localStorage.setItem(ownerKey(roomId), 'true')
       localStorage.setItem(RESIDENT_KEY, roomId)
@@ -185,6 +262,7 @@ export default function RoomView({ roomId }: Props) {
   const handleCheckout = useCallback(async () => {
     setCheckoutLoading(true)
     setCheckoutError('')
+    const residentName = room?.resident_name ?? null
     const { error } = await supabase.from('rooms').delete().eq('id', roomId)
     if (error) {
       console.error('[checkout] error:', error)
@@ -192,6 +270,16 @@ export default function RoomView({ roomId }: Props) {
       setCheckoutLoading(false)
       return
     }
+    // 退去ログを記録（訪問履歴に残す）。await しないと送信されない点に注意。
+    const { data: inserted, error: logError } = await supabase
+      .from('room_logs')
+      .insert({ room_id: roomId, event_type: 'checkout', visitor_name: residentName })
+      .select('id, event_type, visitor_name, created_at')
+      .single()
+    if (logError) {
+      console.error('[checkout log] error:', { code: logError.code, message: logError.message, details: logError.details, hint: logError.hint })
+    }
+    if (inserted) setLogs(prev => [inserted as RoomLog, ...prev])
     localStorage.removeItem(ownerKey(roomId))
     localStorage.removeItem(RESIDENT_KEY)
     setIsOwner(false)
@@ -199,7 +287,7 @@ export default function RoomView({ roomId }: Props) {
     setRoom(null)
     setShowCheckoutConfirm(false)
     setCheckoutLoading(false)
-  }, [roomId])
+  }, [roomId, room])
 
   const bgColor = room?.bg_color ?? '#ffffff'
   const alreadyResidentElsewhere = residentRoomId !== null && residentRoomId !== roomId
@@ -216,43 +304,55 @@ export default function RoomView({ roomId }: Props) {
         </Link>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-300 tracking-[0.3em]">{t.apartmentName}</span>
-          <SettingsButton />
           <LangToggle />
         </div>
       </header>
 
       {/* Room content */}
-      <main className="flex-1 overflow-auto flex flex-col items-center justify-center px-8 py-10">
+      <main className="relative flex-1 overflow-auto flex flex-col items-center justify-center px-8 py-10">
+        <div className="absolute top-3 right-4 z-10">
+          <SettingsButton />
+        </div>
         <div className="text-center w-full max-w-sm space-y-8">
           <div className="space-y-1">
             <p className="text-xs text-gray-400 tracking-[0.5em]">{t.roomLabel}</p>
             <h1 className="text-5xl font-bold tracking-widest">#{roomId}</h1>
           </div>
 
-          {logs.length > 0 && (() => {
-            const visitCount = logs.filter(l => l.event_type === 'visit').length
-            const lastLog = logs[0]
+          {logsLoaded && (() => {
+            // 自分の現在セッションの行を除外し、「前の訪問者」の情報を表示する
+            const others = logs.filter(l => l.id !== myLogId)
+            const lastLog = others[0]
+            // 自分以外の記録が無い → あなたが最初の訪問者
+            if (!lastLog) {
+              return (
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-300 tracking-widest">{t.firstVisitor}</p>
+                </div>
+              )
+            }
+            const visitCount = others.filter(l => l.event_type === 'visit').length
             const timeStr = relativeTime(lastLog.created_at, lang)
-            // 訪問ログが1件だけ（=あなたの初訪問）で入居もまだの場合
-            const isFirstVisitor = lastLog.event_type === 'visit' && visitCount <= 1
             return (
               <div className="space-y-1">
-                {isFirstVisitor ? (
-                  <p className="text-xs text-gray-300 tracking-widest">{t.firstVisitor}</p>
-                ) : (
-                  <>
-                    {visitCount > 0 && (
-                      <p className="text-xs text-gray-300 tracking-widest">{t.visitCount(visitCount)}</p>
-                    )}
-                    <p className="text-xs text-gray-300 tracking-widest">
-                      {lastLog.event_type === 'checkin'
-                        ? t.lastCheckin(timeStr)
-                        : lastLog.visitor_name
-                          ? t.lastVisitBy(timeStr, lastLog.visitor_name)
-                          : t.lastVisit(timeStr)}
-                    </p>
-                  </>
+                {visitCount > 0 && (
+                  <p className="text-xs text-gray-300 tracking-widest">{t.visitCount(visitCount)}</p>
                 )}
+                <p className="text-xs text-gray-300 tracking-widest">
+                  {lastLog.event_type === 'checkin'
+                    ? t.lastCheckin(timeStr)
+                    : lastLog.event_type === 'checkout'
+                      ? t.lastCheckout(timeStr)
+                      : lastLog.visitor_name
+                        ? t.lastVisitBy(timeStr, lastLog.visitor_name)
+                        : t.lastVisit(timeStr)}
+                </p>
+                <button
+                  onClick={() => setShowHistory(true)}
+                  className="text-xs text-gray-400 underline underline-offset-4 hover:text-black transition-colors tracking-widest"
+                >
+                  {t.historyButton}
+                </button>
               </div>
             )
           })()}
@@ -378,6 +478,13 @@ export default function RoomView({ roomId }: Props) {
           isEditMode={modalMode === 'edit'}
           onClose={() => setShowModal(false)}
           onSubmit={handleSubmit}
+        />
+      )}
+
+      {showHistory && (
+        <LogHistoryModal
+          logs={logs.filter(l => l.id !== myLogId).slice(0, 10)}
+          onClose={() => setShowHistory(false)}
         />
       )}
 

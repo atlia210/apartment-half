@@ -12,7 +12,7 @@ export type Room = {
 export type RoomLog = {
   id: number
   room_id: string
-  event_type: 'visit' | 'checkin'
+  event_type: 'visit' | 'checkin' | 'checkout'
   visitor_name: string | null
   created_at: string
 }

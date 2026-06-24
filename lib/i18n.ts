@@ -5,6 +5,8 @@ export const translations = {
     // Root
     tagline: 'アパート1/2',
     chooseDoor: '扉を選んでください',
+    residentCount: (n: number) => `現在 ${n} 人が入居中です`,
+    visitorNumber: (n: number) => `あなたは ${n} 人目の訪問者です`,
     // Header
     apartmentName: 'アパート1/2',
     entrance: 'entrance',
@@ -43,7 +45,16 @@ export const translations = {
     lastVisit: (time: string) => `${time}に誰かが部屋を訪問しました`,
     lastVisitBy: (time: string, name: string) => `${time}に ${name} が部屋を訪問しました`,
     lastCheckin: (time: string) => `${time}に入居されました`,
+    lastCheckout: (time: string) => `${time}に退去されました`,
     firstVisitor: 'あなたが初めての訪問者です',
+    historyButton: '訪問履歴',
+    historyTitle: '訪問履歴（最近10件）',
+    historyEmpty: 'まだ訪問の記録がありません',
+    historyClose: '閉じる',
+    historyVisitBy: (name: string) => `${name} が訪問`,
+    historyVisit: '誰かが訪問',
+    historyCheckin: '入居',
+    historyCheckout: '退去',
     // Welcome (first visit)
     welcomeTitle: 'ようこそ アパート1/2 へ',
     welcomeNamePrompt: 'あなたの名前を教えてください（ニックネーム可）',
@@ -61,6 +72,8 @@ export const translations = {
     // Root
     tagline: 'APARTMENT 1/2',
     chooseDoor: 'choose a door',
+    residentCount: (n: number) => `${n} ${n === 1 ? 'resident' : 'residents'} living here now`,
+    visitorNumber: (n: number) => `you are visitor #${n}`,
     // Header
     apartmentName: 'APARTMENT 1/2',
     entrance: 'entrance',
@@ -99,7 +112,16 @@ export const translations = {
     lastVisit: (time: string) => `someone visited ${time}`,
     lastVisitBy: (time: string, name: string) => `${name} visited ${time}`,
     lastCheckin: (time: string) => `checked in ${time}`,
+    lastCheckout: (time: string) => `moved out ${time}`,
     firstVisitor: 'you are the first visitor',
+    historyButton: 'history',
+    historyTitle: 'VISIT HISTORY (LAST 10)',
+    historyEmpty: 'no visits recorded yet',
+    historyClose: 'close',
+    historyVisitBy: (name: string) => `${name} visited`,
+    historyVisit: 'someone visited',
+    historyCheckin: 'checked in',
+    historyCheckout: 'moved out',
     // Welcome (first visit)
     welcomeTitle: 'WELCOME TO APARTMENT 1/2',
     welcomeNamePrompt: 'What is your name? (nickname is fine)',

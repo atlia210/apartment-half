@@ -11,6 +11,14 @@ const mono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'アパート1/2',
   description: '無限の二分岐アパート',
+  robots: {
+    index: false,
+    follow: false,
+    googleBot: {
+      index: false,
+      follow: false,
+    },
+  },
 }
 
 export default function RootLayout({

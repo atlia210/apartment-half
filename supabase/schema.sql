@@ -48,7 +48,7 @@ create trigger rooms_updated_at
 create table if not exists room_logs (
   id           bigint generated always as identity primary key,
   room_id      text        not null,
-  event_type   text        not null check (event_type in ('visit', 'checkin')),
+  event_type   text        not null check (event_type in ('visit', 'checkin', 'checkout')),
   visitor_name text,
   created_at   timestamptz not null default now()
 );
@@ -63,3 +63,21 @@ create policy "room_logs read"
 
 create policy "room_logs insert"
   on room_logs for insert with check (true);
+
+-- 再訪問時に自分の visit 行の created_at を更新するため（オーナー判定なし・全公開方針）
+create policy "room_logs update"
+  on room_logs for update using (true) with check (true);
+
+-- site_visits: サイト全体の訪問者カウント（entrance で「あなたは N 人目」を表示）
+create table if not exists site_visits (
+  id          bigint generated always as identity primary key,
+  created_at  timestamptz not null default now()
+);
+
+alter table site_visits enable row level security;
+
+create policy "site_visits read"
+  on site_visits for select using (true);
+
+create policy "site_visits insert"
+  on site_visits for insert with check (true);

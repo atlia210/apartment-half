@@ -15,7 +15,7 @@ export default function SettingsButton() {
         onClick={() => setOpen(true)}
         aria-label={t.settings}
         title={t.settings}
-        className="text-gray-400 hover:text-black transition-colors text-base leading-none"
+        className="text-gray-400 hover:text-black transition-colors text-5xl leading-none p-1"
       >
         ⚙
       </button>

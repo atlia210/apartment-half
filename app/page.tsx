@@ -3,14 +3,16 @@
 import Link from 'next/link'
 import { useLang } from '@/contexts/LanguageContext'
 import LangToggle from '@/components/LangToggle'
+import SettingsButton from '@/components/SettingsButton'
 
 export default function Home() {
   const { t } = useLang()
 
   return (
     <div className="h-screen flex flex-col items-center justify-center gap-16 bg-white">
-      {/* Lang toggle — top right */}
-      <div className="absolute top-4 right-4">
+      {/* Settings + Lang toggle — top right */}
+      <div className="absolute top-4 right-4 flex items-center gap-3">
+        <SettingsButton />
         <LangToggle />
       </div>
 
@@ -29,7 +31,7 @@ export default function Home() {
             <span className="text-2xl font-bold">1</span>
           </div>
           <span className="text-xs text-gray-400 group-hover:text-black transition-colors tracking-widest">
-            → room 1
+            ← room 1
           </span>
         </Link>
 
@@ -39,7 +41,7 @@ export default function Home() {
             <span className="text-2xl font-bold">2</span>
           </div>
           <span className="text-xs text-gray-400 group-hover:text-black transition-colors tracking-widest">
-            → room 2
+            room 2 →
           </span>
         </Link>
       </div>

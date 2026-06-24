@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Geist_Mono } from 'next/font/google'
 import { LanguageProvider } from '@/contexts/LanguageContext'
+import WelcomeGate from '@/components/WelcomeGate'
 import './globals.css'
 
 const mono = Geist_Mono({
@@ -20,7 +21,10 @@ export default function RootLayout({
   return (
     <html lang="ja" className={`${mono.className} h-full`}>
       <body className="h-full bg-white text-black">
-        <LanguageProvider>{children}</LanguageProvider>
+        <LanguageProvider>
+          <WelcomeGate />
+          {children}
+        </LanguageProvider>
       </body>
     </html>
   )

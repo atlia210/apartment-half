@@ -43,3 +43,23 @@ $$;
 create trigger rooms_updated_at
   before update on rooms
   for each row execute function update_updated_at();
+
+-- room_logs: 訪問・入居イベントのログ
+create table if not exists room_logs (
+  id           bigint generated always as identity primary key,
+  room_id      text        not null,
+  event_type   text        not null check (event_type in ('visit', 'checkin')),
+  visitor_name text,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists idx_room_logs_room_id
+  on room_logs(room_id, created_at desc);
+
+alter table room_logs enable row level security;
+
+create policy "room_logs read"
+  on room_logs for select using (true);
+
+create policy "room_logs insert"
+  on room_logs for insert with check (true);

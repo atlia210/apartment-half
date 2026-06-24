@@ -1,54 +1,50 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useLang } from '@/contexts/LanguageContext'
-import { getProfile } from '@/lib/profile'
-import type { Room, RoomFormData } from '@/lib/types'
+import { getProfile, saveProfile, emptyProfile } from '@/lib/profile'
+import type { RoomFormData } from '@/lib/types'
 
-type Props = {
-  roomId: string
-  currentRoom: Room | null
-  isEditMode: boolean
-  onClose: () => void
-  onSubmit: (data: RoomFormData) => Promise<void>
+export default function SettingsButton() {
+  const { t } = useLang()
+  const [open, setOpen] = useState(false)
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        aria-label={t.settings}
+        title={t.settings}
+        className="text-gray-400 hover:text-black transition-colors text-base leading-none"
+      >
+        ⚙
+      </button>
+      {open && <SettingsModal onClose={() => setOpen(false)} />}
+    </>
+  )
 }
 
-export default function CheckInModal({ roomId, currentRoom, isEditMode, onClose, onSubmit }: Props) {
+function SettingsModal({ onClose }: { onClose: () => void }) {
   const { t } = useLang()
-  const [form, setForm] = useState<RoomFormData>(() => {
-    // 編集モードは既存の部屋情報、入居モードは事前登録プロフィールで初期化
-    if (isEditMode && currentRoom) {
-      return {
-        resident_name: currentRoom.resident_name ?? '',
-        twitter: currentRoom.twitter ?? '',
-        instagram: currentRoom.instagram ?? '',
-        bio: currentRoom.bio ?? '',
-        bg_color: currentRoom.bg_color ?? '#ffffff',
-      }
-    }
-    return getProfile()
-  })
-  const [loading, setLoading] = useState(false)
+  const [form, setForm] = useState<RoomFormData>(emptyProfile)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    setForm(getProfile())
+  }, [])
+
   const [error, setError] = useState('')
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSave = (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.resident_name.trim()) {
       setError(t.nameRequired)
       return
     }
-    setLoading(true)
     setError('')
-    try {
-      await onSubmit(form)
-    } catch (e: unknown) {
-      const err = e as { message?: string; code?: string; hint?: string }
-      const code = err?.code ? ` [${err.code}]` : ''
-      const hint = err?.hint ? ` — ${err.hint}` : ''
-      console.error('[modal] submit error:', e)
-      setError(`${err?.message ?? t.submitError}${code}${hint}`)
-      setLoading(false)
-    }
+    saveProfile(form)
+    setSaved(true)
+    setTimeout(onClose, 700)
   }
 
   return (
@@ -59,9 +55,7 @@ export default function CheckInModal({ roomId, currentRoom, isEditMode, onClose,
     >
       <div className="bg-white w-full max-w-md border border-black">
         <div className="flex items-center justify-between px-4 py-3 border-b border-black">
-          <h2 className="text-xs font-bold tracking-[0.2em]">
-            {isEditMode ? t.editModalTitle : t.checkInModalTitle(roomId)}
-          </h2>
+          <h2 className="text-xs font-bold tracking-[0.2em]">{t.settingsTitle}</h2>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-black transition-colors text-xs leading-none"
@@ -70,7 +64,9 @@ export default function CheckInModal({ roomId, currentRoom, isEditMode, onClose,
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+        <form onSubmit={handleSave} className="p-4 space-y-4">
+          <p className="text-xs text-gray-400 tracking-wide leading-relaxed">{t.settingsDescription}</p>
+
           <div>
             <label className="text-xs text-gray-400 tracking-widest block mb-1">{t.nameLabel}</label>
             <input
@@ -132,21 +128,14 @@ export default function CheckInModal({ roomId, currentRoom, isEditMode, onClose,
 
           {error && <p className="text-xs text-red-500">{error}</p>}
 
-          <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 border border-gray-300 py-2 text-xs tracking-widest hover:border-black transition-colors"
-            >
-              {t.cancelButton}
-            </button>
+          <div className="flex items-center gap-3 pt-1">
             <button
               type="submit"
-              disabled={loading}
-              className="flex-1 bg-black text-white py-2 text-xs tracking-widest hover:bg-gray-800 transition-colors disabled:opacity-50"
+              className="flex-1 bg-black text-white py-2 text-xs tracking-widest hover:bg-gray-800 transition-colors"
             >
-              {loading ? '...' : isEditMode ? t.updateButton : t.checkInButton}
+              {t.saveButton}
             </button>
+            {saved && <span className="text-xs text-gray-400 tracking-widest">{t.savedMessage}</span>}
           </div>
         </form>
       </div>

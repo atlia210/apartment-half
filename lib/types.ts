@@ -9,6 +9,14 @@ export type Room = {
   updated_at: string
 }
 
+export type RoomLog = {
+  id: number
+  room_id: string
+  event_type: 'visit' | 'checkin'
+  visitor_name: string | null
+  created_at: string
+}
+
 export type RoomFormData = {
   resident_name: string
   twitter: string

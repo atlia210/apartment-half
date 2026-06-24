@@ -4,10 +4,13 @@ import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { useLang } from '@/contexts/LanguageContext'
-import type { Room, RoomFormData } from '@/lib/types'
+import { relativeTime } from '@/lib/i18n'
+import { getProfile } from '@/lib/profile'
+import type { Room, RoomLog, RoomFormData } from '@/lib/types'
 import CheckInModal from './CheckInModal'
 import ConfirmDialog from './ConfirmDialog'
 import LangToggle from './LangToggle'
+import SettingsButton from './SettingsButton'
 
 type Props = {
   roomId: string
@@ -17,7 +20,7 @@ const RESIDENT_KEY = 'apartment-half-resident'
 const ownerKey = (id: string) => `apartment-half-owner:${id}`
 
 export default function RoomView({ roomId }: Props) {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const [room, setRoom] = useState<Room | null>(null)
   const [isOwner, setIsOwner] = useState(false)
   const [residentRoomId, setResidentRoomId] = useState<string | null>(null)
@@ -26,6 +29,7 @@ export default function RoomView({ roomId }: Props) {
   const [showCheckoutConfirm, setShowCheckoutConfirm] = useState(false)
   const [checkoutLoading, setCheckoutLoading] = useState(false)
   const [checkoutError, setCheckoutError] = useState('')
+  const [logs, setLogs] = useState<RoomLog[]>([])
 
   const parentId = roomId.length > 1 ? roomId.slice(0, -1) : null
   const leftDoorId = roomId + '1'
@@ -42,6 +46,40 @@ export default function RoomView({ roomId }: Props) {
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
+  }, [roomId])
+
+  // 訪問ログの記録とフェッチ
+  useEffect(() => {
+    let cancelled = false
+    const visitedKey = `apartment-half-visited:${roomId}`
+
+    const run = async () => {
+      try {
+        // キーを insert 前に同期的にセット（Strict Mode の二重実行による重複記録を防ぐ）
+        if (!sessionStorage.getItem(visitedKey)) {
+          sessionStorage.setItem(visitedKey, 'true')
+          const name = getProfile().resident_name.trim()
+          const { error } = await supabase
+            .from('room_logs')
+            .insert({ room_id: roomId, event_type: 'visit', visitor_name: name || null })
+          // insert 失敗時はキーを戻して次回アクセスで再試行
+          if (error) sessionStorage.removeItem(visitedKey)
+        }
+        if (cancelled) return
+        const { data } = await supabase
+          .from('room_logs')
+          .select('id, event_type, visitor_name, created_at')
+          .eq('room_id', roomId)
+          .order('created_at', { ascending: false })
+          .limit(200)
+        if (!cancelled) setLogs((data as RoomLog[]) ?? [])
+      } catch {
+        // Supabase 未接続時は無視
+      }
+    }
+
+    run()
+    return () => { cancelled = true }
   }, [roomId])
 
   // クライアントサイドで初期データをフェッチ（空室を先に表示してバックグラウンド更新）
@@ -123,6 +161,17 @@ export default function RoomView({ roomId }: Props) {
         }
       }
 
+      if (modalMode === 'checkin') {
+        const name = data.resident_name.trim() || null
+        supabase.from('room_logs').insert({ room_id: roomId, event_type: 'checkin', visitor_name: name })
+        setLogs(prev => [{
+          id: Date.now(),
+          room_id: roomId,
+          event_type: 'checkin' as const,
+          visitor_name: name,
+          created_at: new Date().toISOString(),
+        }, ...prev])
+      }
       localStorage.setItem(ownerKey(roomId), 'true')
       localStorage.setItem(RESIDENT_KEY, roomId)
       setIsOwner(true)
@@ -160,13 +209,14 @@ export default function RoomView({ roomId }: Props) {
       {/* Header */}
       <header className="flex items-center justify-between px-5 py-3 border-b border-black/10 shrink-0">
         <Link
-          href={parentId ? `/room/${parentId}` : '/'}
+          href="/"
           className="text-xs text-gray-400 hover:text-black transition-colors tracking-widest"
         >
-          ← {parentId ? `room ${parentId}` : t.entrance}
+          ← {t.entrance}
         </Link>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-300 tracking-[0.3em]">{t.apartmentName}</span>
+          <SettingsButton />
           <LangToggle />
         </div>
       </header>
@@ -178,6 +228,34 @@ export default function RoomView({ roomId }: Props) {
             <p className="text-xs text-gray-400 tracking-[0.5em]">{t.roomLabel}</p>
             <h1 className="text-5xl font-bold tracking-widest">#{roomId}</h1>
           </div>
+
+          {logs.length > 0 && (() => {
+            const visitCount = logs.filter(l => l.event_type === 'visit').length
+            const lastLog = logs[0]
+            const timeStr = relativeTime(lastLog.created_at, lang)
+            // 訪問ログが1件だけ（=あなたの初訪問）で入居もまだの場合
+            const isFirstVisitor = lastLog.event_type === 'visit' && visitCount <= 1
+            return (
+              <div className="space-y-1">
+                {isFirstVisitor ? (
+                  <p className="text-xs text-gray-300 tracking-widest">{t.firstVisitor}</p>
+                ) : (
+                  <>
+                    {visitCount > 0 && (
+                      <p className="text-xs text-gray-300 tracking-widest">{t.visitCount(visitCount)}</p>
+                    )}
+                    <p className="text-xs text-gray-300 tracking-widest">
+                      {lastLog.event_type === 'checkin'
+                        ? t.lastCheckin(timeStr)
+                        : lastLog.visitor_name
+                          ? t.lastVisitBy(timeStr, lastLog.visitor_name)
+                          : t.lastVisit(timeStr)}
+                    </p>
+                  </>
+                )}
+              </div>
+            )
+          })()}
 
           {room ? (
             // 入居中の部屋
@@ -266,7 +344,18 @@ export default function RoomView({ roomId }: Props) {
             <div className="absolute right-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full border border-black/60 group-hover:border-black transition-colors" />
           </div>
           <span className="text-xs mt-2 text-gray-400 group-hover:text-black transition-colors tracking-widest">
-            → {leftDoorId}
+            ← {leftDoorId}
+          </span>
+        </Link>
+        <Link
+          href={parentId ? `/room/${parentId}` : '/'}
+          className="flex flex-col items-center justify-center py-6 px-6 hover:bg-black/5 transition-colors border-r border-black/10 group shrink-0"
+        >
+          <div className="w-8 h-8 flex items-center justify-center text-gray-400 group-hover:text-black transition-colors text-lg">
+            ↓
+          </div>
+          <span className="text-xs mt-2 text-gray-400 group-hover:text-black transition-colors tracking-widest whitespace-nowrap">
+            {parentId ? `room ${parentId}` : t.entrance}
           </span>
         </Link>
         <Link
@@ -277,7 +366,7 @@ export default function RoomView({ roomId }: Props) {
             <div className="absolute right-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full border border-black/60 group-hover:border-black transition-colors" />
           </div>
           <span className="text-xs mt-2 text-gray-400 group-hover:text-black transition-colors tracking-widest">
-            → {rightDoorId}
+            {rightDoorId} →
           </span>
         </Link>
       </nav>
